@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>高德天气 MCP 查询</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f6f7f4;
+        --panel: #ffffff;
+        --ink: #1d2433;
+        --muted: #647084;
+        --line: #d9dfd2;
+        --accent: #0f766e;
+        --accent-strong: #115e59;
+        --warn: #b42318;
+        --soft: #e9f3ef;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif;
+        background: var(--bg);
+        color: var(--ink);
+      }
+
+      main {
+        width: min(960px, calc(100vw - 32px));
+        margin: 0 auto;
+        padding: 48px 0;
+      }
+
+      header {
+        margin-bottom: 24px;
+      }
+
+      h1 {
+        margin: 0 0 8px;
+        font-size: 32px;
+        line-height: 1.2;
+        letter-spacing: 0;
+      }
+
+      p {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.7;
+      }
+
+      .workspace {
+        display: grid;
+        grid-template-columns: 320px 1fr;
+        gap: 16px;
+        align-items: start;
+      }
+
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 18px;
+      }
+
+      label {
+        display: block;
+        margin-bottom: 8px;
+        font-size: 14px;
+        color: var(--muted);
+      }
+
+      input,
+      select,
+      button {
+        width: 100%;
+        min-height: 42px;
+        border-radius: 6px;
+        font: inherit;
+      }
+
+      input,
+      select {
+        border: 1px solid var(--line);
+        padding: 9px 10px;
+        background: #fff;
+        color: var(--ink);
+      }
+
+      .field {
+        margin-bottom: 14px;
+      }
+
+      button {
+        border: 0;
+        background: var(--accent);
+        color: #fff;
+        cursor: pointer;
+        font-weight: 600;
+      }
+
+      button:hover {
+        background: var(--accent-strong);
+      }
+
+      button:disabled {
+        cursor: wait;
+        opacity: 0.7;
+      }
+
+      .result {
+        min-height: 240px;
+      }
+
+      .status {
+        margin-bottom: 14px;
+        color: var(--muted);
+      }
+
+      .error {
+        color: var(--warn);
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .item {
+        min-height: 70px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 12px;
+        background: var(--soft);
+      }
+
+      .item span {
+        display: block;
+        color: var(--muted);
+        font-size: 13px;
+        margin-bottom: 5px;
+      }
+
+      .item strong {
+        display: block;
+        font-size: 18px;
+        line-height: 1.35;
+        word-break: break-word;
+      }
+
+      pre {
+        margin: 0;
+        overflow: auto;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 14px;
+        background: #16201f;
+        color: #eaf4ef;
+        line-height: 1.55;
+      }
+
+      @media (max-width: 720px) {
+        main {
+          padding: 28px 0;
+        }
+
+        .workspace,
+        .grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>高德天气 MCP 查询</h1>
+        <p>通过浏览器请求本地 Web API，再由 Web API 调用 MCP Server 获取天气。</p>
+      </header>
+
+      <section class="workspace">
+        <form class="panel" id="weather-form">
+          <div class="field">
+            <label for="city">城市</label>
+            <input id="city" name="city" value="北京" autocomplete="address-level2" />
+          </div>
+          <div class="field">
+            <label for="extensions">查询类型</label>
+            <select id="extensions" name="extensions">
+              <option value="base">实时天气</option>
+              <option value="all">天气预报</option>
+            </select>
+          </div>
+          <button id="submit" type="submit">查询天气</button>
+        </form>
+
+        <section class="panel result" aria-live="polite">
+          <div class="status" id="status">输入城市后查询。</div>
+          <div class="grid" id="summary"></div>
+          <pre id="raw" hidden></pre>
+        </section>
+      </section>
+    </main>
+
+    <script>
+      const form = document.querySelector("#weather-form");
+      const statusEl = document.querySelector("#status");
+      const summaryEl = document.querySelector("#summary");
+      const rawEl = document.querySelector("#raw");
+      const submitEl = document.querySelector("#submit");
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const city = document.querySelector("#city").value.trim();
+        const extensions = document.querySelector("#extensions").value;
+        if (!city) {
+          renderError("城市不能为空。");
+          return;
+        }
+
+        submitEl.disabled = true;
+        statusEl.className = "status";
+        statusEl.textContent = "正在查询...";
+        summaryEl.innerHTML = "";
+        rawEl.hidden = true;
+
+        try {
+          const params = new URLSearchParams({ city, extensions });
+          const response = await fetch(`/api/weather?${params.toString()}`);
+          const data = await response.json();
+          if (!response.ok) {
+            throw new Error(data.detail || "查询失败。");
+          }
+          renderWeather(data);
+        } catch (error) {
+          renderError(error.message);
+        } finally {
+          submitEl.disabled = false;
+        }
+      });
+
+      function renderWeather(data) {
+        statusEl.className = "status";
+        statusEl.textContent = "查询完成。";
+        const entries = Object.entries(data).filter(([, value]) => !Array.isArray(value));
+        summaryEl.innerHTML = entries
+          .map(([key, value]) => `<article class="item"><span>${escapeHtml(key)}</span><strong>${escapeHtml(String(value))}</strong></article>`)
+          .join("");
+        rawEl.hidden = false;
+        rawEl.textContent = JSON.stringify(data, null, 2);
+      }
+
+      function renderError(message) {
+        statusEl.className = "status error";
+        statusEl.textContent = message;
+        summaryEl.innerHTML = "";
+        rawEl.hidden = true;
+      }
+
+      function escapeHtml(value) {
+        return value.replace(/[&<>"']/g, (char) => ({
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          '"': "&quot;",
+          "'": "&#39;",
+        })[char]);
+      }
+    </script>
+  </body>
+</html>
